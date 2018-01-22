@@ -33,20 +33,20 @@ Examples
 
 Read current offsets::
 
-    $ undervolt get
+    # undervolt get
     core: 0.0 mV
     gpu: -19.53 mV
     cache: -30.27 mV
     uncore: -29.3 mV
     analogio: -70.31 mV
 
-Apply -100mV offset to CPU Core and Cache::
-
-    $ undervolt set --core -100 --cache -100
-
 Apply -75mV offset to GPU, -100mV to all other planes::
 
-    $ undervolt set --gpu -75 --core -100 --cache -100 --uncore -100 --analogio -100
+    # undervolt set --gpu -75 --core -100 --cache -100 --uncore -100 --analogio -100
+
+Benchmark setting core and cache offsets to -150mV, logging to benchmark.txt
+
+    # PYTHONUNBUFFERED=1 undervolt benchmark --core -150 --cache -150 -i 10 -c 30 | tee benchmark.txt
 
 Usage
 -----
@@ -68,6 +68,11 @@ Usage
       --analogio ANALOGIO  offset (mV)
       --uncore UNCORE      offset (mV)
       --gpu GPU            offset (mV)
+
+- Reading and writing to MSRs requires root privilege, so
+either run as root or use sudo.
+- CPU Core and cache voltages cannot be adjusted seperately- the voltage will
+be set to the least offset of either.
 
 Hardware support
 ----------------

@@ -7,8 +7,10 @@ Tool for undervolting Intel CPUs under Linux
 import argparse
 import logging
 import os
+import time
 from glob import glob
 from struct import pack, unpack
+from subprocess import check_output
 
 PLANES = {
     'core': 0,
@@ -186,14 +188,41 @@ def get_offsets(planes=PLANES.keys()):
     return {plane: get_offset(plane) for plane in planes}
 
 
+def benchmark(settings, iterations, cooldown, multi):
+    """
+    Repeatedly run benchmark while applying and removing settings.
+    Outputs CSV table of offsets and benchmark results.
+    """
+    command = [ 'openssl', 'speed', 'aes-128-cbc' ] + \
+                (['-multi', multi ] if multi else [])
+    cols = ['16 bytes', '64 bytes', '256 bytes', '1024 bytes', '8192 bytes']
+    null_settings = dict((p, 0) for p in settings)
+    print(",".join(settings.keys() + cols))
+    for offsets in (settings, null_settings) * iterations:
+        logging.info("Setting offsets: {}".format(offsets))
+        set_offsets(offsets)
+        output = check_output(command)
+        results = output.splitlines()[-1].split()[2:]
+        voltages = [str(v) for v in offsets.values()]
+        print(','.join(voltages + results))
+        time.sleep(cooldown)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('command', help='command',
-                        choices=('get', 'set',))
+                        choices=('get', 'set', 'benchmark'))
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="print debug info")
     parser.add_argument('-f', '--force', action='store_true',
                         help="allow setting positive offsets")
+
+    # benchmark options
+    parser.add_argument('-i', '--iterations', type=int, default=10,
+                        help="number of benchmark iterations to run")
+    parser.add_argument('-c', '--cooldown', type=int, default=30,
+                        help="number of seconds cooldown between tests")
+    parser.add_argument('-m', '--multicore', type=int, default=1,
+                        help="argument for openssl -multi")
 
     for plane in PLANES:
         parser.add_argument('--{}'.format(plane), type=int, help="offset (mV)")
@@ -217,6 +246,8 @@ def main():
     if args.command == 'set':
         set_offsets(voltage_settings)
 
+    if args.command == 'benchmark':
+        benchmark(voltage_settings, args.iterations, args.cooldown, str(args.multicore))
 
 if __name__ == '__main__':
     main()
