@@ -33,7 +33,7 @@ Examples
 
 Read current offsets::
 
-    $ undervolt --read
+    $ undervolt get
     core: 0.0 mV
     gpu: -19.53 mV
     cache: -30.27 mV
@@ -42,11 +42,11 @@ Read current offsets::
 
 Apply -100mV offset to CPU Core and Cache::
 
-    $ undervolt --core -100 --cache -100
+    $ undervolt set --core -100 --cache -100
 
 Apply -75mV offset to GPU, -100mV to all other planes::
 
-    $ undervolt --gpu -75 --core -100 --cache -100 --uncore -100 --analogio -100
+    $ undervolt set --gpu -75 --core -100 --cache -100 --uncore -100 --analogio -100
 
 Usage
 -----
@@ -54,18 +54,20 @@ Usage
 .. code-block:: bash
 
     $ undervolt -h
-    usage: undervolt [-h] [-v] [-f] [--core CORE] [--gpu GPU] [--cache CACHE]
-                     [--uncore UNCORE] [--analogio ANALOGIO]
+    usage: undervolt.py [-h] [-v] [-f] [--core CORE] [--cache CACHE]
+                        [--analogio ANALOGIO] [--uncore UNCORE] [--gpu GPU]
+                        {get,set}
+    positional arguments:
+      {get,set}            command
     optional arguments:
-      -h, --help            show this help message and exit
-      -v, --verbose         print debug info
-      -f, --force           allow setting positive offsets
-      -r, --read            read existing values
-      --core CORE           offset (mV)
-      --gpu GPU             offset (mV)
-      --cache CACHE         offset (mV)
-      --uncore UNCORE       offset (mV)
-      --analogio ANALOGIO   offset (mV)
+      -h, --help           show this help message and exit
+      -v, --verbose        print debug info
+      -f, --force          allow setting positive offsets
+      --core CORE          offset (mV)
+      --cache CACHE        offset (mV)
+      --analogio ANALOGIO  offset (mV)
+      --uncore UNCORE      offset (mV)
+      --gpu GPU            offset (mV)
 
 Hardware support
 ----------------

@@ -16,7 +16,7 @@ PLANES = {
     'cache': 2,
     'uncore': 3,
     'analogio': 4,
-#   'digitalio': 5, # not working?
+    # 'digitalio': 5, # not working?
 }
 
 
@@ -38,9 +38,10 @@ def write_msr(val, msr=0x150):
         raise OSError("msr module not loaded (run modprobe msr)")
 
 
-def read_msr(msr=0x150, cpu=0):
+def _read_msr(msr=0x150, cpu=0):
     """
     Read a value from single msr node on given CPU (defaults to first)
+    Mailbox won't contain response unless we first write latter,
     """
     n = '/dev/cpu/%d/msr' % (cpu,)
     f = os.open(n, os.O_RDONLY)
@@ -51,13 +52,13 @@ def read_msr(msr=0x150, cpu=0):
     return val
 
 
-def read_offset(plane):
+def read_msr(plane):
     """
-    Write the 'read' value to mailbox, then re-read
+    Write the 'read' value to mailbox, then re-read.
     """
-    value_to_write = pack_offset(plane)
-    write_msr(value_to_write)
-    return read_msr()
+    msg = pack_offset(plane)
+    write_msr(msg)
+    return _read_msr()
 
 
 def convert_offset(mV):
@@ -71,7 +72,9 @@ def convert_offset(mV):
     'f9a00000'
 
     """
-    return format(convert_rounded_offset(int(round(mV*1.024))), '08x')
+    rounded_offset = int(round(mV*1.024))
+    return format(convert_rounded_offset(rounded_offset), '08x')
+
 
 def unconvert_offset(y):
     """ For a given offset, return a value in mV that could have resulted in
@@ -110,7 +113,8 @@ def unconvert_rounded_offset(y):
     """
     >>> from undervolt import convert_offset, unconvert_offset
     >>> domain = [ 1024 - x for x in range(0, 2048) ]
-    >>> all( x == unconvert_rounded_offset(convert_rounded_offset(x)) for x in domain )
+    >>> all(x == \
+          unconvert_rounded_offset(convert_rounded_offset(x)) for x in domain)
     True
     """
     x = y >> 21
@@ -145,6 +149,14 @@ def pack_offset(plane, offset='0'*8):
     ), 0)
 
 
+def get_offset(plane):
+    """
+    Gets the voltage offset for given plane
+    """
+    msr_value = read_msr(plane)
+    return unconvert_offset(msr_value)
+
+
 def set_offset(plane, mV):
     """"
     Set given voltage plane to offset mV
@@ -156,20 +168,32 @@ def set_offset(plane, mV):
     write_value = pack_offset(plane, target)
     write_msr(write_value)
     # now check value set correctly
-    read = format(read_offset(plane), '08x')
+    read = format(read_msr(plane), '08x')
     if read != target:
         logging.error("Failed to set {p}: expected {t}, read {r}".format(
             p=plane, t=target, r=format(read, '08x')))
         raise SystemExit(1)
 
 
+def set_offsets(settings):
+    """Map set_offset over {plane: offset} dict"""
+    for plane, voltage in settings.items():
+        set_offset(plane, voltage)
+
+
+def get_offsets(planes=PLANES.keys()):
+    """Map get_offset over list of planes"""
+    return {plane: get_offset(plane) for plane in planes}
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('command', help='command',
+                        choices=('get', 'set',))
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="print debug info")
     parser.add_argument('-f', '--force', action='store_true',
                         help="allow setting positive offsets")
-    parser.add_argument('-r', '--read', action="store_true", help="read existing values")
 
     for plane in PLANES:
         parser.add_argument('--{}'.format(plane), type=int, help="offset (mV)")
@@ -179,21 +203,19 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    if args.read:
-        for plane in PLANES:
-            msr_value = read_offset(plane)
-            voltage = unconvert_offset(msr_value)
-            print('{plane}: {voltage} mV'.format(
-                plane=plane, voltage=round(voltage, 2)))
+    voltage_settings = {plane: getattr(args, plane)
+                        for plane in PLANES
+                        if getattr(args, plane, None) is not None}
 
-    # for each arg, try to set voltage
-    for plane in PLANES:
-        offset = getattr(args, plane)
-        if offset is None:
-            continue
-        if offset > 0 and not args.force:
-            raise ValueError("Use --force to set positive offset")
-        set_offset(plane, offset)
+    if any(o > 0 for o in voltage_settings.values()) and not args.force:
+        raise ValueError("Use --force to set positive offset")
+
+    if args.command == 'get':
+        for plane, voltage in get_offsets().items():
+            print('{}: {:.2f} mV'.format(plane, voltage))
+
+    if args.command == 'set':
+        set_offsets(voltage_settings)
 
 
 if __name__ == '__main__':
