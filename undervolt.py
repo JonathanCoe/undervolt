@@ -8,6 +8,7 @@ import argparse
 import logging
 import os
 import time
+from itertools import cycle
 from glob import glob
 from struct import pack, unpack
 from subprocess import check_output
@@ -20,6 +21,7 @@ PLANES = {
     'analogio': 4,
     # 'digitalio': 5, # not working?
 }
+OPENSSL_COLS = ['16 bytes', '64 bytes', '256 bytes', '1024 bytes', '8192 bytes']
 
 
 def write_msr(val, msr=0x150):
@@ -43,7 +45,7 @@ def write_msr(val, msr=0x150):
 def _read_msr(msr=0x150, cpu=0):
     """
     Read a value from single msr node on given CPU (defaults to first)
-    Mailbox won't contain response unless we first write latter,
+    Mailbox won't contain response until we write read command
     """
     n = '/dev/cpu/%d/msr' % (cpu,)
     f = os.open(n, os.O_RDONLY)
@@ -188,6 +190,58 @@ def get_offsets(planes=PLANES.keys()):
     return {plane: get_offset(plane) for plane in planes}
 
 
+def running_stats():
+    """
+    Calculate running mean and deviation
+    >>> from undervolt import running_stats
+    >>> stats = running_stats()
+    >>> stats.next()
+    >>> stats.send(1)
+    (1.0, 0.0)
+    >>> stats.send(10)
+    (5.5, 20.25)
+    >>> stats.send(100)
+    (37.0, 1998.0)
+    >>> stats.next()
+    (37.0, 1998.0)
+    """
+    v = yield
+    s = m = n = 0.0
+    while True:
+        n = n + 1
+        m_prev = m
+        m = m + ((v - m) / n)
+        s = s + (v - m) * (v - m_prev)
+        v = yield (m, s / n)
+
+
+def compare(output):
+    """
+    Parse the output of openssl bench and calculate mean
+    Input should be alternating lines to compare
+    >>> from undervolt import compare
+    >>> data = os.linesep.join([ \
+    '325407.75k,341788.78k,345426.86k,349811.03k,342887.08k', \
+    '296018.49k,308396.16k,306790.66k,307006.81k,309996.20k', \
+    '318500.87k,346368.28k,338557.95k,343658.84k,342239.91k', \
+    '271927.80k,298474.60k,302083.16k,300563.80k,287926.95k', \
+    ])
+    >>> compare(data)
+    """
+    stats_a = [running_stats() for _ in range(len(OPENSSL_COLS))]
+    stats_b = [running_stats() for _ in range(len(OPENSSL_COLS))]
+    map(next, stats_a + stats_b)
+    for row, stat_gens in zip(output.splitlines(), cycle((stats_a, stats_b))):
+        results = [float(s.strip('k')) for s in row.split(',')[2:]]
+        _results = [gen.send(r) for r, gen in zip(results, stat_gens)]
+
+    for (col, ((m_a, v_a), (m_b, v_b))) in zip(OPENSSL_COLS, stats_a, stats_b):
+        percentage = (m_a / m_b) * 100
+        print('{}: {:.2d}% (+-{})'.format(
+            col, percentage, v_b
+        ))
+
+
 def benchmark(settings, iterations, cooldown, multi):
     """
     Repeatedly run benchmark while applying and removing settings.
@@ -195,17 +249,18 @@ def benchmark(settings, iterations, cooldown, multi):
     """
     command = [ 'openssl', 'speed', 'aes-128-cbc' ] + \
                 (['-multi', multi ] if multi else [])
-    cols = ['16 bytes', '64 bytes', '256 bytes', '1024 bytes', '8192 bytes']
     null_settings = dict((p, 0) for p in settings)
-    print(",".join(settings.keys() + cols))
+    print(",".join(settings.keys() + OPENSSL_COLS))
     for offsets in (settings, null_settings) * iterations:
         logging.info("Setting offsets: {}".format(offsets))
         set_offsets(offsets)
         output = check_output(command)
+        stats = summary(output)
         results = output.splitlines()[-1].split()[2:]
         voltages = [str(v) for v in offsets.values()]
         print(','.join(voltages + results))
         time.sleep(cooldown)
+
 
 def main():
     parser = argparse.ArgumentParser()
